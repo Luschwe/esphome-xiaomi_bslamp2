@@ -51,16 +51,13 @@ def validate_preset(config):
     has_white = CONF_COLOR_TEMPERATURE in config
     has_effect = CONF_EFFECT in config
 
-    # Check mutual exclusivity of preset options.
     if (has_rgb + has_white + has_effect) > 1:
         raise cv.Invalid("Use only one of RGB light, white (color temperature) light or an effect")
 
-    # Check the color temperature value range.
     if has_white:
         if config[CONF_COLOR_TEMPERATURE] < MIRED_MIN or config[CONF_COLOR_TEMPERATURE] > MIRED_MAX:
             raise cv.Invalid(f"The color temperature must be in the range {MIRED_MIN} - {MIRED_MAX}")
 
-    # When defining an RGB color, it is allowed to omit RGB components that have value 0.
     if has_rgb:
         if CONF_RED not in config:
             config[CONF_RED] = 0
@@ -143,38 +140,38 @@ def maybe_simple_preset_action(schema):
     light.automation.LIGHT_TURN_ON_ACTION_SCHEMA,
     synchronous=True,
 )
-def disco_action_on_to_code(config, action_id, template_arg, args):
-    light_var = yield cg.get_variable(config[CONF_ID])
+async def disco_action_on_to_code(config, action_id, template_arg, args):
+    light_var = await cg.get_variable(config[CONF_ID])
     var = cg.new_Pvariable(action_id, template_arg, light_var)
 
     if CONF_STATE in config:
-        template_ = yield cg.templatable(config[CONF_STATE], args, bool)
+        template_ = await cg.templatable(config[CONF_STATE], args, bool)
         cg.add(var.set_state(template_))
     if CONF_TRANSITION_LENGTH in config:
-        template_ = yield cg.templatable(config[CONF_TRANSITION_LENGTH], args, cg.uint32)
+        template_ = await cg.templatable(config[CONF_TRANSITION_LENGTH], args, cg.uint32)
         cg.add(var.set_transition_length(template_))
     if CONF_FLASH_LENGTH in config:
-        template_ = yield cg.templatable(config[CONF_FLASH_LENGTH], args, cg.uint32)
+        template_ = await cg.templatable(config[CONF_FLASH_LENGTH], args, cg.uint32)
         cg.add(var.set_flash_length(template_))
     if CONF_BRIGHTNESS in config:
-        template_ = yield cg.templatable(config[CONF_BRIGHTNESS], args, float)
+        template_ = await cg.templatable(config[CONF_BRIGHTNESS], args, float)
         cg.add(var.set_brightness(template_))
     if CONF_RED in config:
-        template_ = yield cg.templatable(config[CONF_RED], args, float)
+        template_ = await cg.templatable(config[CONF_RED], args, float)
         cg.add(var.set_red(template_))
     if CONF_GREEN in config:
-        template_ = yield cg.templatable(config[CONF_GREEN], args, float)
+        template_ = await cg.templatable(config[CONF_GREEN], args, float)
         cg.add(var.set_green(template_))
     if CONF_BLUE in config:
-        template_ = yield cg.templatable(config[CONF_BLUE], args, float)
+        template_ = await cg.templatable(config[CONF_BLUE], args, float)
         cg.add(var.set_blue(template_))
     if CONF_COLOR_TEMPERATURE in config:
-        template_ = yield cg.templatable(config[CONF_COLOR_TEMPERATURE], args, float)
+        template_ = await cg.templatable(config[CONF_COLOR_TEMPERATURE], args, float)
         cg.add(var.set_color_temperature(template_))
     if CONF_EFFECT in config:
-        template_ = yield cg.templatable(config[CONF_EFFECT], args, cg.std_string)
+        template_ = await cg.templatable(config[CONF_EFFECT], args, cg.std_string)
         cg.add(var.set_effect(template_))
-    yield var
+    return var
 
 
 @automation.register_action(
@@ -229,22 +226,25 @@ def register_preset_action(value):
     ),
     synchronous=True,
 )
-def preset_activate_to_code(config, action_id, template_arg, args):
-    presets_var = yield cg.get_variable(config[CONF_PRESETS_ID])
+async def preset_activate_to_code(config, action_id, template_arg, args):
+    presets_var = await cg.get_variable(config[CONF_PRESETS_ID])
     action_var = cg.new_Pvariable(action_id, template_arg, presets_var)
     if CONF_NEXT in config:
-        cg.add(action_var.set_operation(f"next_{config[CONF_NEXT]}"))
+        operation_template_ = await cg.templatable(f"next_{config[CONF_NEXT]}", args, cg.std_string)
+        cg.add(action_var.set_operation(operation_template_))
     elif CONF_PRESET in config:
-        cg.add(action_var.set_operation("activate_preset"))
-        group_template_ = yield cg.templatable(config[CONF_GROUP], args, cg.std_string)
+        operation_template_ = await cg.templatable("activate_preset", args, cg.std_string)
+        cg.add(action_var.set_operation(operation_template_))
+        group_template_ = await cg.templatable(config[CONF_GROUP], args, cg.std_string)
         cg.add(action_var.set_group(group_template_))
-        preset_template_ = yield cg.templatable(config[CONF_PRESET], args, cg.std_string)
+        preset_template_ = await cg.templatable(config[CONF_PRESET], args, cg.std_string)
         cg.add(action_var.set_preset(preset_template_))
     else:
-        cg.add(action_var.set_operation("activate_group"))
-        group_template_ = yield cg.templatable(config[CONF_GROUP], args, cg.std_string)
+        operation_template_ = await cg.templatable("activate_group", args, cg.std_string)
+        cg.add(action_var.set_operation(operation_template_))
+        group_template_ = await cg.templatable(config[CONF_GROUP], args, cg.std_string)
         cg.add(action_var.set_group(group_template_))
-    yield action_var
+    return action_var
 
 
 async def light_output_to_code(config):
@@ -264,22 +264,31 @@ async def on_brightness_to_code(config):
 async def preset_to_code(config, preset_group, preset_name):
     light_var = await cg.get_variable(config[CONF_ID])
     preset_var = cg.new_Pvariable(config[CONF_PRESET_ID], light_var, preset_group, preset_name)
+    # FIX ESPHome 2026.4.x: wrap all values via cg.templatable() for TemplatableFn compatibility
     if CONF_TRANSITION_LENGTH in config:
-        cg.add(preset_var.set_transition_length(config[CONF_TRANSITION_LENGTH]))
+        template_ = await cg.templatable(config[CONF_TRANSITION_LENGTH], [], cg.uint32)
+        cg.add(preset_var.set_transition_length(template_))
     if CONF_BRIGHTNESS in config:
-        cg.add(preset_var.set_brightness(config[CONF_BRIGHTNESS]))
+        template_ = await cg.templatable(config[CONF_BRIGHTNESS], [], float)
+        cg.add(preset_var.set_brightness(template_))
     if CONF_RED in config:
-        cg.add(preset_var.set_red(config[CONF_RED]))
+        template_ = await cg.templatable(config[CONF_RED], [], float)
+        cg.add(preset_var.set_red(template_))
     if CONF_GREEN in config:
-        cg.add(preset_var.set_green(config[CONF_GREEN]))
+        template_ = await cg.templatable(config[CONF_GREEN], [], float)
+        cg.add(preset_var.set_green(template_))
     if CONF_BLUE in config:
-        cg.add(preset_var.set_blue(config[CONF_BLUE]))
+        template_ = await cg.templatable(config[CONF_BLUE], [], float)
+        cg.add(preset_var.set_blue(template_))
     if CONF_COLOR_TEMPERATURE in config:
-        cg.add(preset_var.set_color_temperature(config[CONF_COLOR_TEMPERATURE]))
+        template_ = await cg.templatable(config[CONF_COLOR_TEMPERATURE], [], float)
+        cg.add(preset_var.set_color_temperature(template_))
     if CONF_EFFECT in config:
-        cg.add(preset_var.set_effect(config[CONF_EFFECT]))
+        template_ = await cg.templatable(config[CONF_EFFECT], [], cg.std_string)
+        cg.add(preset_var.set_effect(template_))
     else:
-        cg.add(preset_var.set_effect("None"))
+        template_ = await cg.templatable("None", [], cg.std_string)
+        cg.add(preset_var.set_effect(template_))
     return await cg.register_component(preset_var, config)
 
 
